@@ -1,4 +1,4 @@
-"""Core translation engine interacting with local LLM servers (Ollama or llama.cpp)."""
+"""Core translation engine for llama.cpp server."""
 from __future__ import annotations
 
 import json
@@ -8,19 +8,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-PROVIDER_OLLAMA = "ollama"
-PROVIDER_LLAMACPP = "llamacpp"
-VALID_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_LLAMACPP)
+DEFAULT_SERVER = "http://127.0.0.1:8080"
 
-DEFAULT_SERVERS: Dict[str, str] = {
-    PROVIDER_OLLAMA: "http://127.0.0.1:11434",
-    PROVIDER_LLAMACPP: "http://127.0.0.1:8080",
-}
-
-ENDPOINTS: Dict[str, Dict[str, str]] = {
-    PROVIDER_OLLAMA: {"chat": "/api/chat", "generate": "/api/generate"},
-    PROVIDER_LLAMACPP: {"chat": "/v1/chat/completions", "generate": "/v1/completions"},
-}
+CHAT_ENDPOINT = "/v1/chat/completions"
+GENERATE_ENDPOINT = "/v1/completions"
 
 __all__ = [
     "Cue",
@@ -28,11 +19,7 @@ __all__ = [
     "Chunk",
     "TranscriptError",
     "LLMError",
-    "PROVIDER_OLLAMA",
-    "PROVIDER_LLAMACPP",
-    "VALID_PROVIDERS",
-    "DEFAULT_SERVERS",
-    "ENDPOINTS",
+    "DEFAULT_SERVER",
     "llm_translate_single",
     "llm_translate_batch",
     "translate_range",
@@ -72,11 +59,11 @@ class Chunk:
 
 
 class TranscriptError(RuntimeError):
-    """Raised for parsing and formatting problems."""
+    pass
 
 
 class LLMError(RuntimeError):
-    """Raised when the LLM could not be contacted or returned malformed data."""
+    pass
 
 
 def _extract_message(payload: object, *, generate_mode: bool = False) -> str:
@@ -90,8 +77,8 @@ def _extract_message(payload: object, *, generate_mode: bool = False) -> str:
                 if text is not None:
                     return str(text)
             return choice["message"]["content"]
-        except Exception as exc:  # pragma: no cover - defensive
-            raise LLMError(f"Unable to extract chat message: {exc}") from exc
+        except Exception as exc:
+            raise LLMError(f"Unable to extract message: {exc}") from exc
     if "response" in payload:
         return str(payload["response"])
     if "message" in payload and isinstance(payload["message"], dict):
@@ -111,7 +98,7 @@ def _http_json(
     data = json.dumps(payload).encode("utf-8")
     req = Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(req, timeout=timeout) as resp:  # type: ignore[call-arg]
+        with urlopen(req, timeout=timeout) as resp:
             if not stream:
                 body = resp.read().decode("utf-8", errors="replace")
                 if raw_handler:
@@ -253,7 +240,6 @@ def _cleanup_translation(text: str) -> str:
 def _perform_llm_call(
     *,
     server: str,
-    provider: str,
     mode: str,
     body: Dict[str, object],
     generate_prompt: str,
@@ -262,10 +248,9 @@ def _perform_llm_call(
     raw_handler: Optional[Callable[[str], None]] = None,
 ) -> str:
     mode = (mode or "auto").lower()
-    endpoints = ENDPOINTS.get(provider, ENDPOINTS[PROVIDER_OLLAMA])
 
     def request_chat() -> str:
-        url = server.rstrip("/") + endpoints["chat"]
+        url = server.rstrip("/") + CHAT_ENDPOINT
         return _http_json(url, body, timeout, stream=stream, raw_handler=raw_handler)
 
     def request_generate() -> str:
@@ -274,7 +259,7 @@ def _perform_llm_call(
             "prompt": generate_prompt,
             "stream": stream,
         }
-        url = server.rstrip("/") + endpoints["generate"]
+        url = server.rstrip("/") + GENERATE_ENDPOINT
         return _http_json(url, payload, timeout, stream=stream, generate_mode=True, raw_handler=raw_handler)
 
     if mode == "chat":
@@ -294,7 +279,6 @@ def llm_translate_single(
     target: str,
     model: str,
     server: str,
-    provider: str,
     translate_bracketed: bool,
     llm_mode: str,
     stream: bool,
@@ -348,7 +332,6 @@ def llm_translate_single(
 
     raw_result = _perform_llm_call(
         server=server,
-        provider=provider,
         mode=llm_mode,
         body=body,
         generate_prompt=message_content,
@@ -402,7 +385,6 @@ def llm_translate_batch(
     target: str,
     model: str,
     server: str,
-    provider: str,
     llm_mode: str,
     stream: bool,
     timeout: float,
@@ -440,7 +422,6 @@ def llm_translate_batch(
 
     result = _perform_llm_call(
         server=server,
-        provider=provider,
         mode=llm_mode,
         body=body,
         generate_prompt=f"{instructions}\n\n{joined}",
@@ -501,7 +482,6 @@ def _apply_batch(
     target: str,
     model: str,
     server: str,
-    provider: str,
     llm_mode: str,
     stream: bool,
     timeout: float,
@@ -514,7 +494,6 @@ def _apply_batch(
         target=target,
         model=model,
         server=server,
-        provider=provider,
         llm_mode=llm_mode,
         stream=stream,
         timeout=timeout,
@@ -562,7 +541,6 @@ def _apply_batch(
             target=target,
             model=model,
             server=server,
-            provider=provider,
             translate_bracketed=translate_bracketed,
             llm_mode=llm_mode,
             stream=stream,
@@ -588,7 +566,6 @@ def translate_range(
     *,
     server: str,
     model: str,
-    provider: str,
     source: str,
     target: str,
     batch_n: int,
@@ -626,7 +603,6 @@ def translate_range(
                         target=target,
                         model=model,
                         server=server,
-                        provider=provider,
                         translate_bracketed=translate_bracketed,
                         llm_mode=llm_mode,
                         stream=stream,
@@ -653,7 +629,6 @@ def translate_range(
                             target,
                             model,
                             server,
-                            provider,
                             llm_mode,
                             stream,
                             timeout,
@@ -671,7 +646,6 @@ def translate_range(
                         target,
                         model,
                         server,
-                        provider,
                         llm_mode,
                         stream,
                         timeout,

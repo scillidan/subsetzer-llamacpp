@@ -6,9 +6,9 @@ from subsetzer.engine import (
     Cue,
     Chunk,
     Transcript,
-    PROVIDER_OLLAMA,
-    PROVIDER_LLAMACPP,
-    ENDPOINTS,
+    DEFAULT_SERVER,
+    CHAT_ENDPOINT,
+    GENERATE_ENDPOINT,
     _apply_batch,
     translate_range,
 )
@@ -51,36 +51,18 @@ class ApplyBatchTests(unittest.TestCase):
 
         with mock.patch("subsetzer.engine.llm_translate_batch", side_effect=fake_batch):
             missing_first = _apply_batch(
-                self.original_batch[:2],
-                self.cues,
-                "",
-                "",
-                "",
-                "",
-                PROVIDER_OLLAMA,
-                "auto",
-                False,
-                30,
-                True,
-                None,
+                self.original_batch[:2], self.cues,
+                "", "", "", "http://localhost",
+                "auto", False, 30, True, None,
             )
             self.assertEqual(missing_first, [])
             self.assertEqual(self.cues[0].translated, "Hola")
             self.assertEqual(self.cues[1].translated, "Mundo")
 
             missing_second = _apply_batch(
-                self.original_batch[2:],
-                self.cues,
-                "",
-                "",
-                "",
-                "",
-                PROVIDER_OLLAMA,
-                "auto",
-                False,
-                30,
-                True,
-                None,
+                self.original_batch[2:], self.cues,
+                "", "", "", "http://localhost",
+                "auto", False, 30, True, None,
             )
             self.assertEqual(missing_second, [])
             self.assertEqual(self.cues[2].translated, "Baz")
@@ -88,25 +70,15 @@ class ApplyBatchTests(unittest.TestCase):
 
     def test_apply_batch_retries_missing_ids(self):
         def fake_batch(request_batch, **_):
-            # Return only first translation; second gets dropped.
             return [(request_batch[0][0], "Hola")]
 
         with mock.patch("subsetzer.engine.llm_translate_batch", side_effect=fake_batch), mock.patch(
             "subsetzer.engine.llm_translate_single", return_value="Mundo"
         ) as single_mock:
             missing = _apply_batch(
-                self.original_batch[:2],
-                self.cues,
-                "",
-                "",
-                "",
-                "",
-                PROVIDER_OLLAMA,
-                "auto",
-                False,
-                30,
-                True,
-                None,
+                self.original_batch[:2], self.cues,
+                "", "", "", "http://localhost",
+                "auto", False, 30, True, None,
             )
         self.assertEqual(missing, [])
         self.assertEqual(self.cues[0].translated, "Hola")
@@ -124,18 +96,9 @@ class ApplyBatchTests(unittest.TestCase):
             "subsetzer.engine.llm_translate_single", return_value="   "
         ):
             missing = _apply_batch(
-                self.original_batch[:2],
-                self.cues,
-                "",
-                "",
-                "",
-                "",
-                PROVIDER_OLLAMA,
-                "auto",
-                False,
-                30,
-                True,
-                None,
+                self.original_batch[:2], self.cues,
+                "", "", "", "http://localhost",
+                "auto", False, 30, True, None,
             )
         self.assertEqual(missing, ["2"])
         self.assertEqual(self.cues[0].translated, "  Hola  ")
@@ -145,25 +108,16 @@ class ApplyBatchTests(unittest.TestCase):
         def fake_batch(request_batch, **_):
             return [
                 (request_batch[0][0], "Hola"),
-                (request_batch[1][0], "World"),  # identical to source
+                (request_batch[1][0], "World"),
             ]
 
         with mock.patch("subsetzer.engine.llm_translate_batch", side_effect=fake_batch), mock.patch(
             "subsetzer.engine.llm_translate_single", return_value="Mundo"
         ) as single_mock:
             missing = _apply_batch(
-                self.original_batch[:2],
-                self.cues,
-                "",
-                "",
-                "",
-                "",
-                PROVIDER_OLLAMA,
-                "auto",
-                False,
-                30,
-                True,
-                None,
+                self.original_batch[:2], self.cues,
+                "", "", "", "http://localhost",
+                "auto", False, 30, True, None,
             )
         self.assertEqual(missing, [])
         self.assertEqual(self.cues[0].translated, "Hola")
@@ -177,16 +131,9 @@ class ApplyBatchTests(unittest.TestCase):
         with mock.patch("subsetzer.engine._perform_llm_call", return_value=fake_response):
             translated_pairs = engine_mod.llm_translate_batch(
                 pairs,
-                source="en",
-                target="es",
-                model="demo",
-                server="http://localhost",
-                provider=PROVIDER_OLLAMA,
-                llm_mode="auto",
-                stream=False,
-                timeout=30,
-                translate_bracketed=True,
-                raw_handler=None,
+                source="en", target="es", model="demo", server="http://localhost",
+                llm_mode="auto", stream=False, timeout=30,
+                translate_bracketed=True, raw_handler=None,
             )
 
         mapping = {pid: text for pid, text in translated_pairs}
@@ -200,16 +147,9 @@ class ApplyBatchTests(unittest.TestCase):
         with mock.patch("subsetzer.engine._perform_llm_call", return_value=fake_response):
             translated_pairs = engine_mod.llm_translate_batch(
                 pairs,
-                source="en",
-                target="es",
-                model="demo",
-                server="http://localhost",
-                provider=PROVIDER_OLLAMA,
-                llm_mode="auto",
-                stream=False,
-                timeout=30,
-                translate_bracketed=True,
-                raw_handler=None,
+                source="en", target="es", model="demo", server="http://localhost",
+                llm_mode="auto", stream=False, timeout=30,
+                translate_bracketed=True, raw_handler=None,
             )
 
         mapping = {pid: text for pid, text in translated_pairs}
@@ -248,8 +188,8 @@ class HttpJsonStreamTests(unittest.TestCase):
             return fake_response
 
         with mock.patch("subsetzer.engine.urlopen", side_effect=fake_urlopen):
-            result = engine_mod._http_json(  # type: ignore[attr-defined]
-                "http://example/api/chat",
+            result = engine_mod._http_json(
+                "http://example/v1/chat/completions",
                 {"a": 1},
                 10,
                 stream=True,
@@ -267,26 +207,18 @@ class TranslationWhitespaceTests(unittest.TestCase):
 
         with mock.patch("subsetzer.engine.llm_translate_single", return_value=""):
             translate_range(
-                transcript,
-                [chunk],
-                server="http://localhost",
-                model="demo",
-                provider=PROVIDER_OLLAMA,
-                source="en",
-                target="de",
-                batch_n=1,
-                translate_bracketed=True,
-                llm_mode="auto",
-                stream=False,
-                timeout=10,
-                no_llm=False,
+                transcript, [chunk],
+                server="http://localhost", model="demo",
+                source="en", target="de", batch_n=1,
+                translate_bracketed=True, llm_mode="auto",
+                stream=False, timeout=10, no_llm=False,
             )
 
         self.assertEqual(transcript.cues[0].translated, "  Hello  \n")
 
 
-class LlamaCppProviderTests(unittest.TestCase):
-    def test_llamacpp_chat_endpoint(self):
+class LlamaCppEndpointTests(unittest.TestCase):
+    def test_chat_endpoint(self):
         captured_url = None
 
         def fake_http_json(url, payload, timeout, *, stream, generate_mode=False, raw_handler=None):
@@ -297,16 +229,15 @@ class LlamaCppProviderTests(unittest.TestCase):
         with mock.patch("subsetzer.engine._http_json", side_effect=fake_http_json):
             engine_mod._perform_llm_call(
                 server="http://127.0.0.1:8080",
-                provider=PROVIDER_LLAMACPP,
                 mode="chat",
                 body={"model": "test", "messages": [], "stream": False},
                 generate_prompt="hello",
                 stream=False,
                 timeout=30,
             )
-        self.assertEqual(captured_url, "http://127.0.0.1:8080/v1/chat/completions")
+        self.assertEqual(captured_url, "http://127.0.0.1:8080" + CHAT_ENDPOINT)
 
-    def test_llamacpp_generate_endpoint(self):
+    def test_generate_endpoint(self):
         captured_url = None
 
         def fake_http_json(url, payload, timeout, *, stream, generate_mode=False, raw_handler=None):
@@ -317,34 +248,13 @@ class LlamaCppProviderTests(unittest.TestCase):
         with mock.patch("subsetzer.engine._http_json", side_effect=fake_http_json):
             engine_mod._perform_llm_call(
                 server="http://127.0.0.1:8080",
-                provider=PROVIDER_LLAMACPP,
                 mode="generate",
                 body={"model": "test", "messages": [], "stream": False},
                 generate_prompt="hello",
                 stream=False,
                 timeout=30,
             )
-        self.assertEqual(captured_url, "http://127.0.0.1:8080/v1/completions")
-
-    def test_ollama_chat_endpoint(self):
-        captured_url = None
-
-        def fake_http_json(url, payload, timeout, *, stream, generate_mode=False, raw_handler=None):
-            nonlocal captured_url
-            captured_url = url
-            return "Translated text"
-
-        with mock.patch("subsetzer.engine._http_json", side_effect=fake_http_json):
-            engine_mod._perform_llm_call(
-                server="http://127.0.0.1:11434",
-                provider=PROVIDER_OLLAMA,
-                mode="chat",
-                body={"model": "test", "messages": [], "stream": False},
-                generate_prompt="hello",
-                stream=False,
-                timeout=30,
-            )
-        self.assertEqual(captured_url, "http://127.0.0.1:11434/api/chat")
+        self.assertEqual(captured_url, "http://127.0.0.1:8080" + GENERATE_ENDPOINT)
 
     def test_extract_message_choices_text(self):
         payload = {"choices": [{"text": "hello world"}]}
@@ -355,3 +265,8 @@ class LlamaCppProviderTests(unittest.TestCase):
         payload = {"choices": [{"message": {"content": "hello"}}]}
         result = engine_mod._extract_message(payload, generate_mode=False)
         self.assertEqual(result, "hello")
+
+
+class DefaultServerTest(unittest.TestCase):
+    def test_default_server_is_llamacpp(self):
+        self.assertEqual(DEFAULT_SERVER, "http://127.0.0.1:8080")
