@@ -147,6 +147,17 @@ _INLINE_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 _DASH_SPEAKER_RE = re.compile(r"(?m)^-\s")
+_PUNCT_CHARS = '！？。，、；：""''《》【】〖〗『』「」〈〉（）()[\\]{}…—~·.,\'"?!;:'
+_PUNCT_RE = re.compile('[' + re.escape(_PUNCT_CHARS) + ']')
+
+
+def _remove_punctuation(text: str) -> str:
+    if not text:
+        return text
+
+    cleaned = _PUNCT_RE.sub(" ", text)
+    cleaned = re.sub(r" +", " ", cleaned)
+    return cleaned.strip()
 
 
 def _protect_tags(text: str) -> Tuple[str, Dict[str, str]]:
@@ -197,9 +208,12 @@ def _collapse_text(text: str) -> str:
 
     all_dash = all(_DASH_SPEAKER_RE.match(l) for l in non_empty)
     if all_dash and len(non_empty) > 1:
-        return " ".join(non_empty)
+        result = " ".join(non_empty)
+    else:
+        result = " ".join(non_empty)
 
-    return " ".join(non_empty)
+    result = re.sub(r" +", " ", result)
+    return result.strip()
 
 
 def _cleanup_translation(text: str) -> str:
@@ -593,6 +607,7 @@ def translate_range(
     target: str,
     batch_n: int,
     translate_bracketed: bool,
+    no_punc: bool = False,
     llm_mode: str,
     stream: bool,
     timeout: float,
@@ -704,3 +719,5 @@ def translate_range(
     for cue in transcript.cues:
         if cue.translated is not None:
             cue.translated = _collapse_text(cue.translated)
+            if no_punc:
+                cue.translated = _remove_punctuation(cue.translated)

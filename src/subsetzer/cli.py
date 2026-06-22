@@ -76,6 +76,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Preserve bracketed tags like [MUSIC] without translation",
     )
     parser.add_argument(
+        "--no-punc",
+        dest="no_punc",
+        action="store_true",
+        default=False,
+        help="Remove punctuation and replace with spaces, keep - for dialogue",
+    )
+    parser.add_argument(
         "--host",
         dest="api_url",
         default=DEFAULT_API_URL,
@@ -240,6 +247,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             target=args.target,
             batch_n=args.cues_per_request,
             translate_bracketed=args.translate_bracketed,
+            no_punc=args.no_punc,
             llm_mode=args.llm_mode,
             stream=args.stream,
             timeout=args.timeout,

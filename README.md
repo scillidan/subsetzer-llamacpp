@@ -64,6 +64,7 @@ subsetzer-llamacpp --model gemma-3-12b-it --target "Chinese" --input "Movie.en.s
 ### Options
 
 - `--no-translate-bracketed` — preserve `[MUSIC]` and similar tags
+- `--no-punc` — remove punctuation (！？。，""《》… etc.) and replace with spaces; keep `-` for dialogue markers
 - `--stream` / `--no-stream` — toggle streaming (default: on)
 - `--timeout SECS` — HTTP timeout (default: `60`)
 - `--no-llm` — dry-run, reuse source text as output
