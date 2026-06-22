@@ -17,12 +17,13 @@ dist/
 
 # Generated translation outputs and logs
 outputs/
-homedoc.log
+results/
+local/
+subsetzer.log
 llm_raw.txt
 
-# Local sandbox assets (samples, notes, etc.)
-local/
-results/
+# Testing
+.pytest_cache/
 
 # Reference material (not part of this repo)
 reference/

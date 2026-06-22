@@ -1,4 +1,4 @@
-"""Subsetzer core package."""
+"""Subsetzer-llamacpp core package."""
 from __future__ import annotations
 
 from .version import __version__
@@ -8,11 +8,7 @@ from .engine import (
     LLMError,
     Transcript,
     TranscriptError,
-    PROVIDER_OLLAMA,
-    PROVIDER_LLAMACPP,
-    VALID_PROVIDERS,
-    DEFAULT_SERVERS,
-    ENDPOINTS,
+    DEFAULT_SERVER,
     llm_translate_batch,
     llm_translate_single,
     translate_range,
@@ -33,11 +29,7 @@ __all__ = [
     "LLMError",
     "Transcript",
     "TranscriptError",
-    "PROVIDER_OLLAMA",
-    "PROVIDER_LLAMACPP",
-    "VALID_PROVIDERS",
-    "DEFAULT_SERVERS",
-    "ENDPOINTS",
+    "DEFAULT_SERVER",
     "build_output",
     "build_output_as",
     "detect_format",
@@ -48,4 +40,3 @@ __all__ = [
     "resolve_outfile",
     "translate_range",
 ]
-

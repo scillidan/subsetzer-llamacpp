@@ -1,22 +1,15 @@
-"""CLI entry point for subsetzer."""
+"""CLI entry point for subsetzer-llamacpp."""
 from __future__ import annotations
 
 import argparse
 import datetime as dt
-import os
 import re
 import sys
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import List, Optional
 
 from .chunking import make_chunks
-from .engine import (
-    PROVIDER_OLLAMA,
-    PROVIDER_LLAMACPP,
-    VALID_PROVIDERS,
-    DEFAULT_SERVERS,
-    translate_range,
-)
+from .engine import DEFAULT_SERVER, translate_range
 from .io import build_output_as, read_transcript, resolve_outfile
 from .logging_utils import Logger
 from .version import __version__
@@ -24,39 +17,9 @@ from .version import __version__
 DEFAULT_OUTFILE_TEMPLATE = "{basename}.{dst}.{model}.{fmt}"
 
 
-def _env_value(name: str, default: str) -> str:
-    subsetzer_key = f"SUBSETZER_{name}"
-    homedoc_key = f"HOMEDOC_{name}"
-    if subsetzer_key in os.environ:
-        return os.environ[subsetzer_key]
-    return os.getenv(homedoc_key, default)
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _env_value(name, "1" if default else "0")
-    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = _env_value(name, str(default))
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
 def _build_parser() -> argparse.ArgumentParser:
-    provider_default = _env_value("LLM_PROVIDER", PROVIDER_OLLAMA)
-    if provider_default not in VALID_PROVIDERS:
-        provider_default = PROVIDER_OLLAMA
-    model_default = _env_value("LLM_MODEL", "gemma3:12b")
-    mode_default = _env_value("LLM_MODE", "auto")
-    stream_default = _env_bool("STREAM", True)
-    timeout_default = float(_env_value("HTTP_TIMEOUT", "60"))
-    cues_default = _env_int("CUES_PER_REQUEST", 1)
-
     parser = argparse.ArgumentParser(
-        description="Translate subtitle files using a local LLM (Ollama or llama.cpp).",
+        description="Translate subtitle files using a local llama.cpp server.",
     )
     parser.add_argument("--in", dest="input_path", required=True, help="Input subtitle file (.srt/.vtt/.tsv)")
     parser.add_argument("--out", dest="output_dir", required=True, help="Output directory for generated files")
@@ -64,13 +27,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--flat",
         action="store_true",
         default=False,
-        help="Write outputs directly into --out (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--no-flat",
-        dest="flat",
-        action="store_false",
-        help="Write into timestamped folder within --out (default)",
+        help="Write outputs directly into --out (default: timestamped folder)",
     )
     parser.add_argument("--source", default="auto", help="Source language (default: %(default)s)")
     parser.add_argument("--target", default="English", help="Target language (default: %(default)s)")
@@ -82,17 +39,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--outfile",
-        help=(
-            "Output file template. Supports placeholders {basename}, {src}, {dst}, {fmt}, {ts}, {model}."
-        ),
+        help="Output file template. Placeholders: {basename}, {src}, {dst}, {fmt}, {ts}, {model}.",
     )
     parser.add_argument(
         "--cues-per-request",
         "--batch-per-chunk",
         dest="cues_per_request",
         type=int,
-        default=cues_default,
-        help="Number of subtitle cues to send per LLM request (default: %(default)s)",
+        default=1,
+        help="Number of subtitle cues per LLM request (default: %(default)s)",
     )
     parser.add_argument(
         "--max-chars",
@@ -108,34 +63,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Preserve bracketed tags like [MUSIC] without translation",
     )
     parser.add_argument(
-        "--provider",
-        choices=list(VALID_PROVIDERS),
-        default=provider_default,
-        help=f"LLM provider backend (default: {provider_default})",
-    )
-    parser.add_argument(
         "--server",
-        default=None,
-        help="LLM server URL (overrides provider default; env: SUBSETZER_LLM_SERVER)",
+        default=DEFAULT_SERVER,
+        help=f"LLM server URL (default: {DEFAULT_SERVER})",
     )
     parser.add_argument(
         "--model",
-        default=model_default,
-        help=f"LLM model tag (default: {model_default})",
+        default="gemma3:12b",
+        help="LLM model tag (default: %(default)s)",
     )
     parser.add_argument(
         "--llm-mode",
         choices=["auto", "generate", "chat"],
-        default=mode_default,
-        help=f"LLM mode (default: {mode_default})",
+        default="auto",
+        help="LLM mode (default: %(default)s)",
     )
     stream_group = parser.add_mutually_exclusive_group()
     stream_group.add_argument(
         "--stream",
         dest="stream",
         action="store_true",
-        default=stream_default,
-        help="Enable streaming responses",
+        default=True,
+        help="Enable streaming responses (default)",
     )
     stream_group.add_argument(
         "--no-stream",
@@ -146,8 +95,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=timeout_default,
-        help=f"HTTP timeout in seconds (default: {timeout_default})",
+        default=60,
+        help="HTTP timeout in seconds (default: %(default)s)",
     )
     parser.add_argument(
         "--no-llm",
@@ -176,16 +125,7 @@ def _resolve_output_directory(base: Path, flat: bool) -> Path:
     if flat:
         base.mkdir(parents=True, exist_ok=True)
         return base
-    tz_name = os.getenv("SUBSETZER_TZ") or os.getenv("HOMEDOC_TZ")
     now = dt.datetime.now()
-    if tz_name:
-        try:
-            from zoneinfo import ZoneInfo
-
-            tz = ZoneInfo(tz_name)
-            now = dt.datetime.now(tz)
-        except Exception:
-            pass
     folder_name = now.strftime("%Y%m%d-%H%M%S")
     target = base / folder_name
     target.mkdir(parents=True, exist_ok=True)
@@ -211,14 +151,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    server_url = args.server
-    if server_url is None:
-        server_env = _env_value("LLM_SERVER", "")
-        if server_env:
-            server_url = server_env
-        else:
-            server_url = DEFAULT_SERVERS.get(args.provider, DEFAULT_SERVERS[PROVIDER_OLLAMA])
-
     input_path = Path(args.input_path).expanduser()
     output_dir = Path(args.output_dir).expanduser()
 
@@ -235,7 +167,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     target_dir = _resolve_output_directory(output_dir, args.flat)
-    log_path = target_dir / "homedoc.log"
+    log_path = target_dir / "subsetzer.log"
     logger = Logger(file_path=log_path, verbose=args.debug)
     raw_lines: List[str] = []
     collect_raw = bool(args.capture_raw or args.debug)
@@ -251,9 +183,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         translate_range(
             transcript,
             chunks,
-            server=server_url,
+            server=args.server,
             model=args.model,
-            provider=args.provider,
             source=args.source,
             target=args.target,
             batch_n=args.cues_per_request,
