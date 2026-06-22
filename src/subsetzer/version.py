@@ -3,4 +3,9 @@ from __future__ import annotations
 
 __all__ = ["__version__"]
 
-__version__ = "0.2.0"
+try:
+    from importlib.metadata import version
+
+    __version__ = version("subsetzer-llamacpp")
+except Exception:
+    __version__ = "0.0.0"

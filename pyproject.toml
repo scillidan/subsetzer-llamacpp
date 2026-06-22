@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.26"]
+requires = ["hatchling>=1.26", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "subsetzer-llamacpp"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Translate SRT/VTT/TSV via a local llama.cpp server. CLI-first; stdlib-only core."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,6 +26,12 @@ subsetzer-llamacpp = "subsetzer.cli:main"
 [project.urls]
 Homepage = "https://github.com/githabideri/subsetzer"
 Issues = "https://github.com/githabideri/subsetzer/issues"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.hooks.vcs]
+version-file = "src/subsetzer/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/subsetzer"]
