@@ -158,7 +158,7 @@ def _resolve_output_path(args: argparse.Namespace, input_path: Path, ext: str) -
     if src_iso == "auto" and detected_lang:
         src_iso = detected_lang
     dst_iso = normalise_lang(args.target)
-    default_name = f"{clean_stem}.{src_iso}2{dst_iso}.{ext}"
+    default_name = f"{clean_stem}.{src_iso}.{dst_iso}.{ext}"
     cmd_out: Optional[str] = args.output_path
 
     if cmd_out is None:
