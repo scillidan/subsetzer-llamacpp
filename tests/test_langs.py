@@ -1,6 +1,6 @@
 import unittest
 
-from subsetzer.langs import normalise_lang
+from subsetzer.langs import is_known_lang, normalise_lang
 
 
 class LangTests(unittest.TestCase):
@@ -46,3 +46,35 @@ class LangTests(unittest.TestCase):
     def test_case_insensitive(self):
         self.assertEqual(normalise_lang("GERMAN"), "de")
         self.assertEqual(normalise_lang("FrEnCh"), "fr")
+
+    def test_is_known_lang_iso_codes(self):
+        self.assertTrue(is_known_lang("en"))
+        self.assertTrue(is_known_lang("de"))
+        self.assertTrue(is_known_lang("ja"))
+        self.assertTrue(is_known_lang("zh-cn"))
+        self.assertTrue(is_known_lang("zh-tw"))
+        self.assertTrue(is_known_lang("pt-br"))
+
+    def test_is_known_lang_iso_639_2(self):
+        self.assertTrue(is_known_lang("eng"))
+        self.assertTrue(is_known_lang("deu"))
+        self.assertTrue(is_known_lang("jpn"))
+
+    def test_is_known_lang_english_names(self):
+        self.assertTrue(is_known_lang("English"))
+        self.assertTrue(is_known_lang("German"))
+        self.assertTrue(is_known_lang("Chinese"))
+
+    def test_is_known_lang_unknown(self):
+        self.assertFalse(is_known_lang("xyz"))
+        self.assertFalse(is_known_lang("xyz-unknown"))
+        self.assertFalse(is_known_lang("not-a-language"))
+
+    def test_is_known_lang_empty_and_auto(self):
+        self.assertFalse(is_known_lang(""))
+        self.assertFalse(is_known_lang("auto"))
+        self.assertFalse(is_known_lang("Auto"))
+
+    def test_is_known_lang_case_insensitive(self):
+        self.assertTrue(is_known_lang("GERMAN"))
+        self.assertTrue(is_known_lang("EnGlIsH"))

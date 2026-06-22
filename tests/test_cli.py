@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 from subsetzer import cli
+from subsetzer.langs import is_known_lang
 
 
 class CliTests(unittest.TestCase):
@@ -64,3 +65,48 @@ class CliTests(unittest.TestCase):
         parser = cli._build_parser()
         args = parser.parse_args(["--input", "x.srt", "--model", "t", "--target", "de", "--host", "http://other:9999"])
         self.assertEqual(args.api_url, "http://other:9999")
+
+    def test_output_strips_lang_suffix_from_filename(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            infile = tmp_path / "movie.en.srt"
+            infile.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
+            cli.main(["--input", str(infile), "--target", "Chinese", "--model", "dummy", "--no-llm", "--force"])
+            default_out = tmp_path / "movie.en2zh-cn.srt"
+            self.assertTrue(default_out.exists(), f"Expected {default_out} to exist")
+
+    def test_output_strips_iso639_2_lang_suffix_from_filename(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            infile = tmp_path / "movie.eng.srt"
+            infile.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
+            cli.main(["--input", str(infile), "--target", "German", "--model", "dummy", "--no-llm", "--force"])
+            default_out = tmp_path / "movie.en2de.srt"
+            self.assertTrue(default_out.exists(), f"Expected {default_out} to exist")
+
+    def test_output_no_lang_suffix_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            infile = tmp_path / "movie.srt"
+            infile.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
+            cli.main(["--input", str(infile), "--target", "Chinese", "--model", "dummy", "--no-llm", "--force"])
+            default_out = tmp_path / "movie.auto2zh-cn.srt"
+            self.assertTrue(default_out.exists(), f"Expected {default_out} to exist")
+
+    def test_output_explicit_source_overrides_filename_lang(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            infile = tmp_path / "movie.en.srt"
+            infile.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
+            cli.main(["--input", str(infile), "--target", "Japanese", "--source", "de",
+                      "--model", "dummy", "--no-llm", "--force"])
+            default_out = tmp_path / "movie.de2ja.srt"
+            self.assertTrue(default_out.exists(), f"Expected {default_out} to exist")
+
+    def test_strip_lang_suffix_helper(self):
+        self.assertEqual(cli._strip_lang_suffix("movie"), ("movie", None))
+        self.assertEqual(cli._strip_lang_suffix("movie.en"), ("movie", "en"))
+        self.assertEqual(cli._strip_lang_suffix("movie.eng"), ("movie", "en"))
+        self.assertEqual(cli._strip_lang_suffix("movie.Chinese"), ("movie", "zh-cn"))
+        self.assertEqual(cli._strip_lang_suffix("movie.en.xyz"), ("movie.en.xyz", None))
+        self.assertEqual(cli._strip_lang_suffix("Ulysses (1954).en"), ("Ulysses (1954)", "en"))

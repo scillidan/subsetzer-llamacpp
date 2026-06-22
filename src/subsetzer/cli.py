@@ -10,7 +10,7 @@ from typing import List, Optional
 from .chunking import make_chunks
 from .engine import DEFAULT_API_URL, translate_range
 from .io import build_output_as, read_transcript
-from .langs import normalise_lang
+from .langs import is_known_lang, normalise_lang
 from .logging_utils import Logger
 from .version import __version__
 
@@ -135,10 +135,23 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _strip_lang_suffix(stem: str) -> tuple[str, Optional[str]]:
+    if "." not in stem:
+        return stem, None
+    base, suffix = stem.rsplit(".", 1)
+    if is_known_lang(suffix):
+        return base, normalise_lang(suffix)
+    return stem, None
+
+
 def _resolve_output_path(args: argparse.Namespace, input_path: Path, ext: str) -> Path:
+    clean_stem, detected_lang = _strip_lang_suffix(input_path.stem)
+
     src_iso = normalise_lang(args.source)
+    if src_iso == "auto" and detected_lang:
+        src_iso = detected_lang
     dst_iso = normalise_lang(args.target)
-    default_name = f"{input_path.stem}.{src_iso}2{dst_iso}.{ext}"
+    default_name = f"{clean_stem}.{src_iso}2{dst_iso}.{ext}"
     cmd_out: Optional[str] = args.output_path
 
     if cmd_out is None:
@@ -176,6 +189,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as exc:
         print(f"Error preparing chunks: {exc}", file=sys.stderr)
         return 1
+
+    if args.source == "auto":
+        _, detected = _strip_lang_suffix(input_path.stem)
+        if detected:
+            args.source = detected
 
     src_iso = normalise_lang(args.source)
     dst_iso = normalise_lang(args.target)

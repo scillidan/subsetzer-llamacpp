@@ -97,6 +97,15 @@ _LANG_MAP = {
 _CLEAN_RE = re.compile(r"[\s_-]+")
 
 
+def is_known_lang(token: str) -> bool:
+    if not token or not token.strip():
+        return False
+    t = token.strip().lower()
+    if t == "auto":
+        return False
+    return t in _LANG_MAP or _CLEAN_RE.sub("-", t) in _LANG_MAP
+
+
 def normalise_lang(token: str) -> str:
     if not token or not token.strip():
         return "auto"
