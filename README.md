@@ -71,3 +71,7 @@ subsetzer-llamacpp \
 ### Model Notes
 
 Larger models (12B+ parameters) produce more reliable translations. Smaller checkpoints often echo source text despite automatic retries.
+
+### License
+
+GPL-3.0-or-later
