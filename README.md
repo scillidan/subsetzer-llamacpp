@@ -1,10 +1,8 @@
 # Subsetzer-llamacpp
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.9%2B-informational?style=flat-square)
-![License](https://img.shields.io/badge/license-GPL--3.0--or--later-brightgreen?style=flat-square)
 
-Forked and substantially rewritten from the original [subsetzer](https://github.com/githabideri/subsetzer) by Martin Fellner (githabideri/subsetzer).
+Forked and substantially rewritten from the original [subsetzer](https://github.com/githabideri/subsetzer) by Martin Fellner.
 The core translation pipeline (chunking, batch translation, tag protection, cleanup) follows the original design, but:
 
 - Stripped to llama.cpp-only, CLI-only, no env vars, no external deps
@@ -26,9 +24,7 @@ Authors: GLM-5.1🧙‍♂️, DeepSeek-V4-Pro🧙‍♂️, scillidan🤡
 ## Install
 
 ```bash
-uv pip install git+https://github.com/githabideri/subsetzer
-# Update
-uv pip install --reinstall git+https://github.com/githabideri/subsetzer
+uv tool install git+https://github.com/scillidan/subsetzer-llamacpp
 ```
 
 ## Quickstart
