@@ -59,5 +59,7 @@ def write_srt(transcript: Transcript) -> str:
     segments = []
     for idx, cue in enumerate(transcript.cues, start=1):
         text = cue.translated if cue.translated is not None else cue.text
-        segments.append(f"{idx}\n{cue.start} --> {cue.end}\n{text}")
+        start = cue.start.replace(".", ",")
+        end = cue.end.replace(".", ",")
+        segments.append(f"{idx}\n{start} --> {end}\n{text}")
     return "\n\n".join(segments) + "\n"
