@@ -1,4 +1,4 @@
-"""Core translation engine interacting with Ollama-compatible servers."""
+"""Core translation engine interacting with local LLM servers (Ollama or llama.cpp)."""
 from __future__ import annotations
 
 import json
@@ -8,12 +8,31 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+PROVIDER_OLLAMA = "ollama"
+PROVIDER_LLAMACPP = "llamacpp"
+VALID_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_LLAMACPP)
+
+DEFAULT_SERVERS: Dict[str, str] = {
+    PROVIDER_OLLAMA: "http://127.0.0.1:11434",
+    PROVIDER_LLAMACPP: "http://127.0.0.1:8080",
+}
+
+ENDPOINTS: Dict[str, Dict[str, str]] = {
+    PROVIDER_OLLAMA: {"chat": "/api/chat", "generate": "/api/generate"},
+    PROVIDER_LLAMACPP: {"chat": "/v1/chat/completions", "generate": "/v1/completions"},
+}
+
 __all__ = [
     "Cue",
     "Transcript",
     "Chunk",
     "TranscriptError",
     "LLMError",
+    "PROVIDER_OLLAMA",
+    "PROVIDER_LLAMACPP",
+    "VALID_PROVIDERS",
+    "DEFAULT_SERVERS",
+    "ENDPOINTS",
     "llm_translate_single",
     "llm_translate_batch",
     "translate_range",
@@ -60,13 +79,17 @@ class LLMError(RuntimeError):
     """Raised when the LLM could not be contacted or returned malformed data."""
 
 
-def _extract_message(payload: object) -> str:
+def _extract_message(payload: object, *, generate_mode: bool = False) -> str:
     if not isinstance(payload, dict):
         raise LLMError("Unexpected payload type; expected JSON object.")
-    # OpenAI compatibility: {"choices": [{"message": {"content": "..."}}, ...]}
     if "choices" in payload:
         try:
-            return payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            if generate_mode:
+                text = choice.get("text")
+                if text is not None:
+                    return str(text)
+            return choice["message"]["content"]
         except Exception as exc:  # pragma: no cover - defensive
             raise LLMError(f"Unable to extract chat message: {exc}") from exc
     if "response" in payload:
@@ -82,6 +105,7 @@ def _http_json(
     timeout: float,
     *,
     stream: bool,
+    generate_mode: bool = False,
     raw_handler: Optional[Callable[[str], None]] = None,
 ) -> str:
     data = json.dumps(payload).encode("utf-8")
@@ -96,7 +120,7 @@ def _http_json(
                     parsed = json.loads(body)
                 except json.JSONDecodeError as exc:
                     raise LLMError(f"Malformed JSON response from server: {exc}") from exc
-                return _extract_message(parsed)
+                return _extract_message(parsed, generate_mode=generate_mode)
 
             pieces: List[str] = []
             for raw_line in resp:
@@ -114,7 +138,7 @@ def _http_json(
                 except json.JSONDecodeError:
                     continue
                 try:
-                    piece = _extract_message(parsed)
+                    piece = _extract_message(parsed, generate_mode=generate_mode)
                 except LLMError:
                     continue
                 pieces.append(piece)
@@ -229,6 +253,7 @@ def _cleanup_translation(text: str) -> str:
 def _perform_llm_call(
     *,
     server: str,
+    provider: str,
     mode: str,
     body: Dict[str, object],
     generate_prompt: str,
@@ -237,19 +262,20 @@ def _perform_llm_call(
     raw_handler: Optional[Callable[[str], None]] = None,
 ) -> str:
     mode = (mode or "auto").lower()
+    endpoints = ENDPOINTS.get(provider, ENDPOINTS[PROVIDER_OLLAMA])
 
     def request_chat() -> str:
-        url = server.rstrip("/") + "/api/chat"
+        url = server.rstrip("/") + endpoints["chat"]
         return _http_json(url, body, timeout, stream=stream, raw_handler=raw_handler)
 
     def request_generate() -> str:
-        payload = {
+        payload: Dict[str, object] = {
             "model": body.get("model"),
             "prompt": generate_prompt,
             "stream": stream,
         }
-        url = server.rstrip("/") + "/api/generate"
-        return _http_json(url, payload, timeout, stream=stream, raw_handler=raw_handler)
+        url = server.rstrip("/") + endpoints["generate"]
+        return _http_json(url, payload, timeout, stream=stream, generate_mode=True, raw_handler=raw_handler)
 
     if mode == "chat":
         return request_chat()
@@ -257,8 +283,7 @@ def _perform_llm_call(
         return request_generate()
     try:
         return request_chat()
-    except LLMError as exc:
-        # Fallback to /generate if /chat fails
+    except LLMError:
         return request_generate()
 
 
@@ -269,6 +294,7 @@ def llm_translate_single(
     target: str,
     model: str,
     server: str,
+    provider: str,
     translate_bracketed: bool,
     llm_mode: str,
     stream: bool,
@@ -322,6 +348,7 @@ def llm_translate_single(
 
     raw_result = _perform_llm_call(
         server=server,
+        provider=provider,
         mode=llm_mode,
         body=body,
         generate_prompt=message_content,
@@ -375,6 +402,7 @@ def llm_translate_batch(
     target: str,
     model: str,
     server: str,
+    provider: str,
     llm_mode: str,
     stream: bool,
     timeout: float,
@@ -412,6 +440,7 @@ def llm_translate_batch(
 
     result = _perform_llm_call(
         server=server,
+        provider=provider,
         mode=llm_mode,
         body=body,
         generate_prompt=f"{instructions}\n\n{joined}",
@@ -472,6 +501,7 @@ def _apply_batch(
     target: str,
     model: str,
     server: str,
+    provider: str,
     llm_mode: str,
     stream: bool,
     timeout: float,
@@ -484,6 +514,7 @@ def _apply_batch(
         target=target,
         model=model,
         server=server,
+        provider=provider,
         llm_mode=llm_mode,
         stream=stream,
         timeout=timeout,
@@ -531,6 +562,7 @@ def _apply_batch(
             target=target,
             model=model,
             server=server,
+            provider=provider,
             translate_bracketed=translate_bracketed,
             llm_mode=llm_mode,
             stream=stream,
@@ -556,6 +588,7 @@ def translate_range(
     *,
     server: str,
     model: str,
+    provider: str,
     source: str,
     target: str,
     batch_n: int,
@@ -593,6 +626,7 @@ def translate_range(
                         target=target,
                         model=model,
                         server=server,
+                        provider=provider,
                         translate_bracketed=translate_bracketed,
                         llm_mode=llm_mode,
                         stream=stream,
@@ -619,6 +653,7 @@ def translate_range(
                             target,
                             model,
                             server,
+                            provider,
                             llm_mode,
                             stream,
                             timeout,
@@ -636,6 +671,7 @@ def translate_range(
                         target,
                         model,
                         server,
+                        provider,
                         llm_mode,
                         stream,
                         timeout,

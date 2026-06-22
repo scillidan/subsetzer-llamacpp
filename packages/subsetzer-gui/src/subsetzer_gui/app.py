@@ -24,7 +24,7 @@ else:
     _TK_IMPORT_ERROR = None
 
 from subsetzer import build_output_as, make_chunks, read_transcript, resolve_outfile, translate_range
-from subsetzer.engine import Chunk, Transcript
+from subsetzer.engine import Chunk, Transcript, PROVIDER_OLLAMA, PROVIDER_LLAMACPP, VALID_PROVIDERS
 
 DEFAULT_OUTFILE_TEMPLATE = "{basename}.{dst}.{model}.{fmt}"
 
@@ -49,6 +49,7 @@ class App:
         self.outfile_template_var = tk.StringVar(value=DEFAULT_OUTFILE_TEMPLATE)
         self.server_var = tk.StringVar(value="http://127.0.0.1:11434")
         self.model_var = tk.StringVar(value="gemma3:12b")
+        self.provider_var = tk.StringVar(value=PROVIDER_OLLAMA)
         self.cues_per_request_var = tk.IntVar(value=1)
         self.max_chars_var = tk.IntVar(value=4000)
         self.bracket_var = tk.BooleanVar(value=True)
@@ -124,6 +125,10 @@ class App:
         add_row("Model", tk.Entry(frame, textvariable=self.model_var), row)
         row += 1
 
+        provider_menu = tk.OptionMenu(frame, self.provider_var, *VALID_PROVIDERS)
+        add_row("Provider", provider_menu, row)
+        row += 1
+
         cues_spin = tk.Spinbox(frame, from_=1, to=50, textvariable=self.cues_per_request_var, width=6)
         add_row("Cues/request", cues_spin, row)
         row += 1
@@ -185,6 +190,7 @@ class App:
             self.target_var,
             self.server_var,
             self.model_var,
+            self.provider_var,
             self.cues_per_request_var,
             self.max_chars_var,
             self.bracket_var,
@@ -215,6 +221,8 @@ class App:
             self.server_var.set(args.server)
         if getattr(args, "model", None):
             self.model_var.set(args.model)
+        if getattr(args, "provider", None) and args.provider in VALID_PROVIDERS:
+            self.provider_var.set(args.provider)
         if getattr(args, "cues_per_request", None) is not None:
             try:
                 self.cues_per_request_var.set(int(args.cues_per_request))
@@ -261,6 +269,7 @@ class App:
 
         source = self.source_var.get().strip() or "auto"
         target = self.target_var.get().strip() or "English"
+        provider = self.provider_var.get().strip() or PROVIDER_OLLAMA
         server = self.server_var.get().strip() or "http://127.0.0.1:11434"
         model = self.model_var.get().strip() or "gemma3:12b"
         try:
@@ -281,6 +290,7 @@ class App:
 
         args.extend(["--source", source])
         args.extend(["--target", target])
+        args.extend(["--provider", provider])
         args.extend(["--server", server])
         args.extend(["--model", model])
         args.extend(["--cues-per-request", str(cues)])
@@ -408,6 +418,7 @@ class App:
         args = dict(
             server=self.server_var.get().strip(),
             model=self.model_var.get().strip(),
+            provider=self.provider_var.get().strip() or PROVIDER_OLLAMA,
             source=self.source_var.get().strip(),
             target=self.target_var.get().strip(),
             batch_n=batch_n,
@@ -555,6 +566,7 @@ def _build_gui_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target", help="Target language override")
     parser.add_argument("--server", help="LLM server URL")
     parser.add_argument("--model", help="LLM model tag")
+    parser.add_argument("--provider", choices=list(VALID_PROVIDERS), help="LLM provider backend")
     parser.add_argument("--cues-per-request", type=int, dest="cues_per_request")
     parser.add_argument("--max-chars", type=int, dest="max_chars")
 

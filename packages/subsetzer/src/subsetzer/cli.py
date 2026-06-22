@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from .chunking import make_chunks
-from .engine import translate_range
+from .engine import (
+    PROVIDER_OLLAMA,
+    PROVIDER_LLAMACPP,
+    VALID_PROVIDERS,
+    DEFAULT_SERVERS,
+    translate_range,
+)
 from .io import build_output_as, read_transcript, resolve_outfile
 from .logging_utils import Logger
 from .version import __version__
@@ -40,7 +46,9 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    server_default = _env_value("LLM_SERVER", "http://127.0.0.1:11434")
+    provider_default = _env_value("LLM_PROVIDER", PROVIDER_OLLAMA)
+    if provider_default not in VALID_PROVIDERS:
+        provider_default = PROVIDER_OLLAMA
     model_default = _env_value("LLM_MODEL", "gemma3:12b")
     mode_default = _env_value("LLM_MODE", "auto")
     stream_default = _env_bool("STREAM", True)
@@ -48,7 +56,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cues_default = _env_int("CUES_PER_REQUEST", 1)
 
     parser = argparse.ArgumentParser(
-        description="Translate subtitle files using a local Ollama-compatible LLM.",
+        description="Translate subtitle files using a local LLM (Ollama or llama.cpp).",
     )
     parser.add_argument("--in", dest="input_path", required=True, help="Input subtitle file (.srt/.vtt/.tsv)")
     parser.add_argument("--out", dest="output_dir", required=True, help="Output directory for generated files")
@@ -100,9 +108,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Preserve bracketed tags like [MUSIC] without translation",
     )
     parser.add_argument(
+        "--provider",
+        choices=list(VALID_PROVIDERS),
+        default=provider_default,
+        help=f"LLM provider backend (default: {provider_default})",
+    )
+    parser.add_argument(
         "--server",
-        default=server_default,
-        help=f"LLM server URL (default: {server_default})",
+        default=None,
+        help="LLM server URL (overrides provider default; env: SUBSETZER_LLM_SERVER)",
     )
     parser.add_argument(
         "--model",
@@ -197,6 +211,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    server_url = args.server
+    if server_url is None:
+        server_env = _env_value("LLM_SERVER", "")
+        if server_env:
+            server_url = server_env
+        else:
+            server_url = DEFAULT_SERVERS.get(args.provider, DEFAULT_SERVERS[PROVIDER_OLLAMA])
+
     input_path = Path(args.input_path).expanduser()
     output_dir = Path(args.output_dir).expanduser()
 
@@ -229,8 +251,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         translate_range(
             transcript,
             chunks,
-            server=args.server,
+            server=server_url,
             model=args.model,
+            provider=args.provider,
             source=args.source,
             target=args.target,
             batch_n=args.cues_per_request,
