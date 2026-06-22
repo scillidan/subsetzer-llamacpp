@@ -6,10 +6,11 @@ from subsetzer.engine import (
     Cue,
     Chunk,
     Transcript,
-    DEFAULT_SERVER,
+    DEFAULT_API_URL,
     CHAT_ENDPOINT,
     GENERATE_ENDPOINT,
     _apply_batch,
+    _collapse_text,
     translate_range,
 )
 
@@ -26,6 +27,35 @@ class FakeStreamResponse:
 
     def __iter__(self):
         return iter(self._lines)
+
+
+class CollapseTextTests(unittest.TestCase):
+    def test_simple_text(self):
+        self.assertEqual(_collapse_text("hello"), "hello")
+
+    def test_multiline_text_merged_to_one_line(self):
+        self.assertEqual(_collapse_text("line one\nline two"), "line one line two")
+
+    def test_dash_speakers_merged_with_space(self):
+        self.assertEqual(_collapse_text("- The queen.\n- The queen."), "- The queen. - The queen.")
+
+    def test_triple_dash_speakers(self):
+        self.assertEqual(_collapse_text("- A\n- B\n- C"), "- A - B - C")
+
+    def test_single_dash_unchanged(self):
+        self.assertEqual(_collapse_text("- The queen."), "- The queen.")
+
+    def test_mixed_content_not_dash_merged(self):
+        self.assertEqual(_collapse_text("hello\nworld"), "hello world")
+
+    def test_trailing_newline_stripped(self):
+        self.assertEqual(_collapse_text("hello\n"), "hello")
+
+    def test_empty_string(self):
+        self.assertEqual(_collapse_text(""), "")
+
+    def test_whitespace_only_lines(self):
+        self.assertEqual(_collapse_text("  hello  \n\n  world  "), "hello world")
 
 
 class ApplyBatchTests(unittest.TestCase):
@@ -131,7 +161,7 @@ class ApplyBatchTests(unittest.TestCase):
         with mock.patch("subsetzer.engine._perform_llm_call", return_value=fake_response):
             translated_pairs = engine_mod.llm_translate_batch(
                 pairs,
-                source="en", target="es", model="demo", server="http://localhost",
+                source="en", target="es", model="demo", api_url="http://localhost",
                 llm_mode="auto", stream=False, timeout=30,
                 translate_bracketed=True, raw_handler=None,
             )
@@ -147,7 +177,7 @@ class ApplyBatchTests(unittest.TestCase):
         with mock.patch("subsetzer.engine._perform_llm_call", return_value=fake_response):
             translated_pairs = engine_mod.llm_translate_batch(
                 pairs,
-                source="en", target="es", model="demo", server="http://localhost",
+                source="en", target="es", model="demo", api_url="http://localhost",
                 llm_mode="auto", stream=False, timeout=30,
                 translate_bracketed=True, raw_handler=None,
             )
@@ -175,10 +205,10 @@ class ApplyBatchTests(unittest.TestCase):
 
 
 class HttpJsonStreamTests(unittest.TestCase):
-    def test_streaming_data_prefix_handling(self):
+    def test_streaming_delta_prefix_handling(self):
         lines = [
-            'data: {"message": {"content": "Hel"}}',
-            'data: {"message": {"content": "lo"}}',
+            'data: {"choices": [{"delta": {"content": "Hel"}}]}',
+            'data: {"choices": [{"delta": {"content": "lo"}}]}',
             "data: [DONE]",
         ]
         fake_response = FakeStreamResponse(lines)
@@ -199,22 +229,65 @@ class HttpJsonStreamTests(unittest.TestCase):
         self.assertEqual(result, "Hello")
         self.assertEqual(collector, lines)
 
+    def test_streaming_message_content_still_works(self):
+        lines = [
+            'data: {"choices": [{"message": {"content": "Hel"}}]}',
+            'data: {"choices": [{"message": {"content": "lo"}}]}',
+            "data: [DONE]",
+        ]
+        fake_response = FakeStreamResponse(lines)
+
+        def fake_urlopen(req, timeout):
+            return fake_response
+
+        with mock.patch("subsetzer.engine.urlopen", side_effect=fake_urlopen):
+            result = engine_mod._http_json(
+                "http://example/v1/chat/completions",
+                {"a": 1},
+                10,
+                stream=True,
+            )
+
+        self.assertEqual(result, "Hello")
+
 
 class TranslationWhitespaceTests(unittest.TestCase):
-    def test_translate_range_preserves_whitespace_on_empty(self):
+    def test_translate_range_collapses_output_to_single_line(self):
         transcript = Transcript(fmt="srt", cues=[Cue(index=1, start="0", end="1", text="  Hello  \n")])
         chunk = Chunk(cid=1, start_idx=1, end_idx=1, charcount=5)
 
         with mock.patch("subsetzer.engine.llm_translate_single", return_value=""):
             translate_range(
                 transcript, [chunk],
-                server="http://localhost", model="demo",
+                api_url="http://localhost", model="demo",
                 source="en", target="de", batch_n=1,
                 translate_bracketed=True, llm_mode="auto",
                 stream=False, timeout=10, no_llm=False,
             )
 
-        self.assertEqual(transcript.cues[0].translated, "  Hello  \n")
+        self.assertEqual(transcript.cues[0].translated, "Hello")
+
+    def test_translate_range_progress_tracks_cues(self):
+        transcript = Transcript(fmt="srt", cues=[
+            Cue(index=1, start="0", end="1", text="Hi"),
+            Cue(index=2, start="1", end="2", text="Bye"),
+        ])
+        chunk = Chunk(cid=1, start_idx=1, end_idx=2, charcount=5)
+        progress_calls = []
+
+        with mock.patch("subsetzer.engine.llm_translate_single", return_value="Hola"):
+            translate_range(
+                transcript, [chunk],
+                api_url="http://localhost", model="demo",
+                source="en", target="es", batch_n=1,
+                translate_bracketed=True, llm_mode="auto",
+                stream=False, timeout=10, no_llm=False,
+                progress=lambda done, total: progress_calls.append((done, total)),
+            )
+
+        self.assertEqual(progress_calls, [(1, 2), (2, 2)])
+        self.assertEqual(transcript.cues[0].translated, "Hola")
+        self.assertEqual(transcript.cues[1].translated, "Hola")
 
 
 class LlamaCppEndpointTests(unittest.TestCase):
@@ -228,7 +301,7 @@ class LlamaCppEndpointTests(unittest.TestCase):
 
         with mock.patch("subsetzer.engine._http_json", side_effect=fake_http_json):
             engine_mod._perform_llm_call(
-                server="http://127.0.0.1:8080",
+                api_url="http://127.0.0.1:8080",
                 mode="chat",
                 body={"model": "test", "messages": [], "stream": False},
                 generate_prompt="hello",
@@ -247,7 +320,7 @@ class LlamaCppEndpointTests(unittest.TestCase):
 
         with mock.patch("subsetzer.engine._http_json", side_effect=fake_http_json):
             engine_mod._perform_llm_call(
-                server="http://127.0.0.1:8080",
+                api_url="http://127.0.0.1:8080",
                 mode="generate",
                 body={"model": "test", "messages": [], "stream": False},
                 generate_prompt="hello",
@@ -269,4 +342,4 @@ class LlamaCppEndpointTests(unittest.TestCase):
 
 class DefaultServerTest(unittest.TestCase):
     def test_default_server_is_llamacpp(self):
-        self.assertEqual(DEFAULT_SERVER, "http://127.0.0.1:8080")
+        self.assertEqual(DEFAULT_API_URL, "http://127.0.0.1:8080")

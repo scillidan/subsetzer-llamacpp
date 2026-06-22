@@ -3,43 +3,56 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import re
 import sys
 from pathlib import Path
 from typing import List, Optional
 
 from .chunking import make_chunks
-from .engine import DEFAULT_SERVER, translate_range
-from .io import build_output_as, read_transcript, resolve_outfile
+from .engine import DEFAULT_API_URL, translate_range
+from .io import build_output_as, read_transcript
+from .langs import normalise_lang
 from .logging_utils import Logger
 from .version import __version__
-
-DEFAULT_OUTFILE_TEMPLATE = "{basename}.{dst}.{model}.{fmt}"
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Translate subtitle files using a local llama.cpp server.",
     )
-    parser.add_argument("--in", dest="input_path", required=True, help="Input subtitle file (.srt/.vtt/.tsv)")
-    parser.add_argument("--out", dest="output_dir", required=True, help="Output directory for generated files")
     parser.add_argument(
-        "--flat",
+        "--input",
+        dest="input_path",
+        required=True,
+        help="Input subtitle file (.srt/.vtt/.tsv)",
+    )
+    parser.add_argument(
+        "--output",
+        dest="output_path",
+        default=None,
+        help="Output file path (default: same dir as input, auto-named). "
+             "Absolute path: used directly. Relative: from working directory. "
+             "Existing directory: auto-named inside it.",
+    )
+    parser.add_argument(
+        "--force",
         action="store_true",
-        default=False,
-        help="Write outputs directly into --out (default: timestamped folder)",
+        help="Overwrite output file without prompting",
     )
-    parser.add_argument("--source", default="auto", help="Source language (default: %(default)s)")
-    parser.add_argument("--target", default="English", help="Target language (default: %(default)s)")
     parser.add_argument(
-        "--outfmt",
-        choices=["auto", "srt", "vtt", "tsv"],
+        "--source",
         default="auto",
-        help="Output format (default: %(default)s matches input)",
+        help="Source language: ISO code (en, zh-cn), English name (Chinese), or 'auto' (default)",
     )
     parser.add_argument(
-        "--outfile",
-        help="Output file template. Placeholders: {basename}, {src}, {dst}, {fmt}, {ts}, {model}.",
+        "--target",
+        required=True,
+        help="Target language: ISO code (zh-cn), English name (Chinese), etc.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["srt", "vtt", "tsv"],
+        default="srt",
+        help="Output format (default: srt)",
     )
     parser.add_argument(
         "--cues-per-request",
@@ -47,13 +60,13 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="cues_per_request",
         type=int,
         default=1,
-        help="Number of subtitle cues per LLM request (default: %(default)s)",
+        help="Number of subtitle cues per LLM request (default: 1)",
     )
     parser.add_argument(
         "--max-chars",
         type=int,
         default=4000,
-        help="Maximum characters per chunk when planning (default: %(default)s)",
+        help="Maximum characters per chunk (default: 4000)",
     )
     parser.add_argument(
         "--no-translate-bracketed",
@@ -63,20 +76,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Preserve bracketed tags like [MUSIC] without translation",
     )
     parser.add_argument(
-        "--server",
-        default=DEFAULT_SERVER,
-        help=f"LLM server URL (default: {DEFAULT_SERVER})",
+        "--host",
+        dest="api_url",
+        default=DEFAULT_API_URL,
+        help=f"llama.cpp server URL (default: {DEFAULT_API_URL})",
     )
     parser.add_argument(
         "--model",
-        default="gemma3:12b",
-        help="LLM model tag (default: %(default)s)",
+        required=True,
+        help="LLM model tag (e.g. gemma-3-12b-it)",
     )
     parser.add_argument(
         "--llm-mode",
         choices=["auto", "generate", "chat"],
         default="auto",
-        help="LLM mode (default: %(default)s)",
+        help="LLM mode (default: auto)",
     )
     stream_group = parser.add_mutually_exclusive_group()
     stream_group.add_argument(
@@ -96,7 +110,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--timeout",
         type=float,
         default=60,
-        help="HTTP timeout in seconds (default: %(default)s)",
+        help="HTTP timeout in seconds (default: 60)",
     )
     parser.add_argument(
         "--no-llm",
@@ -111,7 +125,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--capture-raw",
         action="store_true",
-        help="Persist raw LLM payloads to llm_raw.txt (default: disabled)",
+        help="Persist raw LLM payloads to {output}_raw.txt",
     )
     parser.add_argument(
         "--version",
@@ -121,30 +135,25 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_output_directory(base: Path, flat: bool) -> Path:
-    if flat:
-        base.mkdir(parents=True, exist_ok=True)
-        return base
-    now = dt.datetime.now()
-    folder_name = now.strftime("%Y%m%d-%H%M%S")
-    target = base / folder_name
-    target.mkdir(parents=True, exist_ok=True)
-    return target
+def _resolve_output_path(args: argparse.Namespace, input_path: Path, ext: str) -> Path:
+    src_iso = normalise_lang(args.source)
+    dst_iso = normalise_lang(args.target)
+    default_name = f"{input_path.stem}.{src_iso}2{dst_iso}.{ext}"
+    cmd_out: Optional[str] = args.output_path
 
+    if cmd_out is None:
+        return input_path.with_name(default_name)
 
-def _write_file(path: Path, content: str) -> None:
-    try:
-        path.write_text(content, encoding="utf-8")
-    except OSError as exc:
-        raise RuntimeError(f"Unable to write {path.name}: {exc}") from exc
+    raw = Path(cmd_out).expanduser()
+    out = raw if raw.is_absolute() else Path.cwd() / raw
 
+    if out.is_dir() or cmd_out.endswith(("/", "\\")):
+        target_dir = out if out.is_dir() else out.parent
+        return target_dir / default_name
 
-def _language_token(label: str, fallback: str) -> str:
-    cleaned = re.sub(r"[\s]+", "_", label.strip())
-    cleaned = re.sub(r"[^0-9A-Za-z._-]", "-", cleaned)
-    cleaned = re.sub(r"[-_]{2,}", "_", cleaned)
-    result = cleaned.strip("_-.")
-    return result.lower() or fallback
+    if not out.suffix or out.suffix.lstrip(".").lower() not in ("srt", "vtt", "tsv"):
+        out = out.with_suffix(f".{ext}")
+    return out
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -152,7 +161,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     input_path = Path(args.input_path).expanduser()
-    output_dir = Path(args.output_dir).expanduser()
+    if not input_path.exists():
+        print(f"Error: input file not found: {input_path}", file=sys.stderr)
+        return 1
 
     try:
         transcript = read_transcript(str(input_path))
@@ -166,24 +177,46 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Error preparing chunks: {exc}", file=sys.stderr)
         return 1
 
-    target_dir = _resolve_output_directory(output_dir, args.flat)
-    log_path = target_dir / "subsetzer.log"
+    src_iso = normalise_lang(args.source)
+    dst_iso = normalise_lang(args.target)
+    output_ext = args.format
+    output_path = _resolve_output_path(args, input_path, output_ext)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if output_path.exists() and not args.force:
+        answer = input(f"Overwrite {output_path}? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Aborted.", file=sys.stderr)
+            return 1
+    elif output_path.exists() and args.force:
+        print(f"Overwriting {output_path}")
+
+    log_path = output_path.with_suffix(".log")
     logger = Logger(file_path=log_path, verbose=args.debug)
     raw_lines: List[str] = []
     collect_raw = bool(args.capture_raw or args.debug)
 
-    logger.log(f"Loaded transcript with {len(transcript.cues)} cues in {transcript.fmt.upper()} format")
-    logger.log(f"Planned {len(chunks)} chunk(s) with max {args.max_chars} characters")
+    total_cues = len(transcript.cues)
+    logger.log(f"Loaded transcript with {total_cues} cues in {transcript.fmt.upper()} format")
+    logger.log(f"Planned {len(chunks)} chunk(s) with max {args.max_chars} chars")
+    logger.log(f"Translate {src_iso} -> {dst_iso} via {args.api_url} model={args.model}")
 
     def raw_handler(payload: str) -> None:
         if collect_raw:
             raw_lines.append(payload)
 
+    def show_progress(done: int, total: int) -> None:
+        pct = done * 100 // total
+        bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
+        print(f"\r  [{bar}] {pct:3d}%  {done}/{total} cues", end="", flush=True)
+
+    show_progress(0, total_cues)
+
     try:
         translate_range(
             transcript,
             chunks,
-            server=args.server,
+            api_url=args.api_url,
             model=args.model,
             source=args.source,
             target=args.target,
@@ -196,21 +229,25 @@ def main(argv: Optional[List[str]] = None) -> int:
             logger=logger.log,
             raw_handler=raw_handler if collect_raw else None,
             verbose=args.debug,
+            progress=show_progress,
         )
     except Exception as exc:
+        print()
         logger.log(f"Translation failed: {exc}")
         logger.close()
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
+    show_progress(total_cues, total_cues)
+    print()
+
     timestamp = dt.datetime.now(dt.timezone.utc).astimezone()
     vtt_note = f"translated-with model={args.model} time={timestamp.isoformat()}"
-    target_fmt = args.outfmt if args.outfmt != "auto" else transcript.fmt
     try:
         result = build_output_as(
             transcript,
-            target_fmt,
-            vtt_note=vtt_note if target_fmt == "vtt" else None,
+            output_ext,
+            vtt_note=vtt_note if output_ext == "vtt" else None,
         )
     except Exception as exc:
         logger.log(f"Failed to render output: {exc}")
@@ -218,45 +255,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    outfile_template = args.outfile if args.outfile else DEFAULT_OUTFILE_TEMPLATE
-    template_path: str
-    if outfile_template.startswith("~") or Path(outfile_template).is_absolute():
-        template_path = outfile_template
-    else:
-        template_path = str(target_dir / outfile_template)
-
     try:
-        output_path = resolve_outfile(
-            template_path,
-            input_path,
-            _language_token(args.source or "auto", "auto"),
-            _language_token(args.target or "unknown", "unknown"),
-            target_fmt,
-            model=args.model,
-        )
-    except Exception as exc:
-        logger.log(f"Failed to resolve output path: {exc}")
-        logger.close()
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
-
-    try:
-        _write_file(output_path, result)
-    except Exception as exc:
+        output_path.write_text(result, encoding="utf-8")
+    except OSError as exc:
         logger.log(str(exc))
         logger.close()
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    logger.log(f"Wrote {target_fmt.upper()} output to {output_path}")
+    logger.log(f"Wrote {output_ext.upper()} output to {output_path}")
 
     if collect_raw:
-        raw_path = target_dir / "llm_raw.txt"
+        raw_path = output_path.with_name(output_path.stem + "_raw.txt")
         try:
             raw_path.write_text("\n".join(raw_lines), encoding="utf-8")
             logger.log(f"Captured raw LLM payloads in {raw_path}")
         except OSError:
-            logger.log("Unable to write llm_raw.txt")
+            logger.log("Unable to write raw payloads")
 
     logger.close()
     return 0

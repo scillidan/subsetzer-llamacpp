@@ -8,7 +8,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-DEFAULT_SERVER = "http://127.0.0.1:8080"
+DEFAULT_API_URL = "http://127.0.0.1:8080"
 
 CHAT_ENDPOINT = "/v1/chat/completions"
 GENERATE_ENDPOINT = "/v1/completions"
@@ -19,11 +19,12 @@ __all__ = [
     "Chunk",
     "TranscriptError",
     "LLMError",
-    "DEFAULT_SERVER",
+    "DEFAULT_API_URL",
     "llm_translate_single",
     "llm_translate_batch",
     "translate_range",
     "_apply_batch",
+    "_collapse_text",
 ]
 
 
@@ -76,7 +77,11 @@ def _extract_message(payload: object, *, generate_mode: bool = False) -> str:
                 text = choice.get("text")
                 if text is not None:
                     return str(text)
-            return choice["message"]["content"]
+            msg = choice.get("message") or choice.get("delta") or {}
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                return content
+            raise KeyError("content")
         except Exception as exc:
             raise LLMError(f"Unable to extract message: {exc}") from exc
     if "response" in payload:
@@ -141,6 +146,7 @@ _INLINE_MARKER_RE = re.compile(
     r"^\s*(?:CUE|OUTPUT|TRANSLATION|TRANSLATED|RESPONSE|ANSWER|INPUT)\s*:\s*(.*)$",
     re.IGNORECASE,
 )
+_DASH_SPEAKER_RE = re.compile(r"(?m)^-\s")
 
 
 def _protect_tags(text: str) -> Tuple[str, Dict[str, str]]:
@@ -177,6 +183,23 @@ def _restore_placeholders(text: str, mapping: Dict[str, str]) -> str:
     for placeholder, value in mapping.items():
         text = text.replace(placeholder, value)
     return text
+
+
+def _collapse_text(text: str) -> str:
+    text = text.strip()
+    if not text:
+        return text
+
+    lines = text.split("\n")
+    non_empty = [l.strip() for l in lines if l.strip()]
+    if not non_empty:
+        return text
+
+    all_dash = all(_DASH_SPEAKER_RE.match(l) for l in non_empty)
+    if all_dash and len(non_empty) > 1:
+        return " ".join(non_empty)
+
+    return " ".join(non_empty)
 
 
 def _cleanup_translation(text: str) -> str:
@@ -239,7 +262,7 @@ def _cleanup_translation(text: str) -> str:
 
 def _perform_llm_call(
     *,
-    server: str,
+    api_url: str,
     mode: str,
     body: Dict[str, object],
     generate_prompt: str,
@@ -250,7 +273,7 @@ def _perform_llm_call(
     mode = (mode or "auto").lower()
 
     def request_chat() -> str:
-        url = server.rstrip("/") + CHAT_ENDPOINT
+        url = api_url.rstrip("/") + CHAT_ENDPOINT
         return _http_json(url, body, timeout, stream=stream, raw_handler=raw_handler)
 
     def request_generate() -> str:
@@ -259,7 +282,7 @@ def _perform_llm_call(
             "prompt": generate_prompt,
             "stream": stream,
         }
-        url = server.rstrip("/") + GENERATE_ENDPOINT
+        url = api_url.rstrip("/") + GENERATE_ENDPOINT
         return _http_json(url, payload, timeout, stream=stream, generate_mode=True, raw_handler=raw_handler)
 
     if mode == "chat":
@@ -278,7 +301,7 @@ def llm_translate_single(
     source: str,
     target: str,
     model: str,
-    server: str,
+    api_url: str,
     translate_bracketed: bool,
     llm_mode: str,
     stream: bool,
@@ -324,14 +347,14 @@ def llm_translate_single(
     body = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are a precise subtitle translator."},
+            {"role": "system", "content": f"You are a professional subtitle translator. Always produce natural, idiomatic {target}. Never echo the source text. Output ONLY the translation."},
             {"role": "user", "content": message_content},
         ],
         "stream": stream,
     }
 
     raw_result = _perform_llm_call(
-        server=server,
+        api_url=api_url,
         mode=llm_mode,
         body=body,
         generate_prompt=message_content,
@@ -384,7 +407,7 @@ def llm_translate_batch(
     source: str,
     target: str,
     model: str,
-    server: str,
+    api_url: str,
     llm_mode: str,
     stream: bool,
     timeout: float,
@@ -414,14 +437,14 @@ def llm_translate_batch(
     body = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You translate subtitles in bulk."},
+            {"role": "system", "content": f"You translate subtitles in bulk from {source} to {target}. Always produce natural, idiomatic {target}. Never echo the source text."},
             {"role": "user", "content": f"{instructions}\n\nINPUT:\n{joined}"},
         ],
         "stream": stream,
     }
 
     result = _perform_llm_call(
-        server=server,
+        api_url=api_url,
         mode=llm_mode,
         body=body,
         generate_prompt=f"{instructions}\n\n{joined}",
@@ -481,7 +504,7 @@ def _apply_batch(
     source: str,
     target: str,
     model: str,
-    server: str,
+    api_url: str,
     llm_mode: str,
     stream: bool,
     timeout: float,
@@ -493,7 +516,7 @@ def _apply_batch(
         source=source,
         target=target,
         model=model,
-        server=server,
+        api_url=api_url,
         llm_mode=llm_mode,
         stream=stream,
         timeout=timeout,
@@ -527,7 +550,7 @@ def _apply_batch(
         previous_translation = ""
         if idx > 0:
             prev = cues_slice[idx - 1]
-            context_before = prev.translated if prev.translated is not None else prev.text
+            context_before = prev.text
             previous_translation = prev.translated or ""
         context_after = cues_slice[idx + 1].text if idx + 1 < len(cues_slice) else ""
         next_translation = (
@@ -540,7 +563,7 @@ def _apply_batch(
             source=source,
             target=target,
             model=model,
-            server=server,
+            api_url=api_url,
             translate_bracketed=translate_bracketed,
             llm_mode=llm_mode,
             stream=stream,
@@ -564,7 +587,7 @@ def translate_range(
     transcript: Transcript,
     chunks: List[Chunk],
     *,
-    server: str,
+    api_url: str,
     model: str,
     source: str,
     target: str,
@@ -577,9 +600,13 @@ def translate_range(
     logger: Optional[Callable[[str], None]] = None,
     raw_handler: Optional[Callable[[str], None]] = None,
     verbose: bool = False,
+    progress: Optional[Callable[[int, int], None]] = None,
 ) -> None:
     if batch_n <= 0:
         raise ValueError("batch_n must be positive")
+
+    total_cues = len(transcript.cues)
+    cues_done = 0
 
     for chunk in chunks:
         if logger and verbose:
@@ -593,6 +620,9 @@ def translate_range(
             if no_llm:
                 for cue in cues_slice:
                     cue.translated = cue.text
+                    cues_done += 1
+                    if progress:
+                        progress(cues_done, total_cues)
                 chunk.status = "done"
                 continue
             if batch_n == 1:
@@ -602,7 +632,7 @@ def translate_range(
                         source=source,
                         target=target,
                         model=model,
-                        server=server,
+                        api_url=api_url,
                         translate_bracketed=translate_bracketed,
                         llm_mode=llm_mode,
                         stream=stream,
@@ -617,6 +647,9 @@ def translate_range(
                             logger(
                                 f"Warning: empty translation for cue {cue.index}; reused original text"
                             )
+                    cues_done += 1
+                    if progress:
+                        progress(cues_done, total_cues)
             else:
                 batch: List[Tuple[str, str]] = []
                 for cue in cues_slice:
@@ -628,13 +661,16 @@ def translate_range(
                             source,
                             target,
                             model,
-                            server,
+                            api_url,
                             llm_mode,
                             stream,
                             timeout,
                             translate_bracketed,
                             raw_handler,
                         )
+                        cues_done += len(batch)
+                        if progress:
+                            progress(cues_done, total_cues)
                         if missing and logger:
                             logger("Warning: missing translations for IDs " + ", ".join(missing))
                         batch = []
@@ -645,13 +681,16 @@ def translate_range(
                         source,
                         target,
                         model,
-                        server,
+                        api_url,
                         llm_mode,
                         stream,
                         timeout,
                         translate_bracketed,
                         raw_handler,
                     )
+                    cues_done += len(batch)
+                    if progress:
+                        progress(cues_done, total_cues)
                     if missing and logger:
                         logger("Warning: missing translations for IDs " + ", ".join(missing))
             chunk.status = "done"
@@ -661,3 +700,7 @@ def translate_range(
             if logger:
                 logger(f"Error processing chunk {chunk.cid}: {exc}")
             raise RuntimeError(f"Chunk {chunk.cid} failed: {exc}") from exc
+
+    for cue in transcript.cues:
+        if cue.translated is not None:
+            cue.translated = _collapse_text(cue.translated)

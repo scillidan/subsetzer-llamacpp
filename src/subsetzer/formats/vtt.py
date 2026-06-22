@@ -6,7 +6,7 @@ from typing import List, Optional
 from ..engine import Cue, Transcript, TranscriptError
 from .common import clean_lines, split_times_with_settings
 
-__all__ = ["parse_vtt", "write_vtt", "split_times"]
+__all__ = ["parse_vtt", "write_vtt"]
 
 
 def parse_vtt(text: str) -> Transcript:
