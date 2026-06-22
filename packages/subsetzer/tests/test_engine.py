@@ -6,6 +6,9 @@ from subsetzer.engine import (
     Cue,
     Chunk,
     Transcript,
+    PROVIDER_OLLAMA,
+    PROVIDER_LLAMACPP,
+    ENDPOINTS,
     _apply_batch,
     translate_range,
 )
@@ -54,6 +57,7 @@ class ApplyBatchTests(unittest.TestCase):
                 "",
                 "",
                 "",
+                PROVIDER_OLLAMA,
                 "auto",
                 False,
                 30,
@@ -71,6 +75,7 @@ class ApplyBatchTests(unittest.TestCase):
                 "",
                 "",
                 "",
+                PROVIDER_OLLAMA,
                 "auto",
                 False,
                 30,
@@ -96,6 +101,7 @@ class ApplyBatchTests(unittest.TestCase):
                 "",
                 "",
                 "",
+                PROVIDER_OLLAMA,
                 "auto",
                 False,
                 30,
@@ -124,6 +130,7 @@ class ApplyBatchTests(unittest.TestCase):
                 "",
                 "",
                 "",
+                PROVIDER_OLLAMA,
                 "auto",
                 False,
                 30,
@@ -151,6 +158,7 @@ class ApplyBatchTests(unittest.TestCase):
                 "",
                 "",
                 "",
+                PROVIDER_OLLAMA,
                 "auto",
                 False,
                 30,
@@ -173,6 +181,7 @@ class ApplyBatchTests(unittest.TestCase):
                 target="es",
                 model="demo",
                 server="http://localhost",
+                provider=PROVIDER_OLLAMA,
                 llm_mode="auto",
                 stream=False,
                 timeout=30,
@@ -195,6 +204,7 @@ class ApplyBatchTests(unittest.TestCase):
                 target="es",
                 model="demo",
                 server="http://localhost",
+                provider=PROVIDER_OLLAMA,
                 llm_mode="auto",
                 stream=False,
                 timeout=30,
@@ -261,6 +271,7 @@ class TranslationWhitespaceTests(unittest.TestCase):
                 [chunk],
                 server="http://localhost",
                 model="demo",
+                provider=PROVIDER_OLLAMA,
                 source="en",
                 target="de",
                 batch_n=1,
@@ -272,3 +283,75 @@ class TranslationWhitespaceTests(unittest.TestCase):
             )
 
         self.assertEqual(transcript.cues[0].translated, "  Hello  \n")
+
+
+class LlamaCppProviderTests(unittest.TestCase):
+    def test_llamacpp_chat_endpoint(self):
+        captured_url = None
+
+        def fake_http_json(url, payload, timeout, *, stream, generate_mode=False, raw_handler=None):
+            nonlocal captured_url
+            captured_url = url
+            return "Translated text"
+
+        with mock.patch("subsetzer.engine._http_json", side_effect=fake_http_json):
+            engine_mod._perform_llm_call(
+                server="http://127.0.0.1:8080",
+                provider=PROVIDER_LLAMACPP,
+                mode="chat",
+                body={"model": "test", "messages": [], "stream": False},
+                generate_prompt="hello",
+                stream=False,
+                timeout=30,
+            )
+        self.assertEqual(captured_url, "http://127.0.0.1:8080/v1/chat/completions")
+
+    def test_llamacpp_generate_endpoint(self):
+        captured_url = None
+
+        def fake_http_json(url, payload, timeout, *, stream, generate_mode=False, raw_handler=None):
+            nonlocal captured_url
+            captured_url = url
+            return "Generated text"
+
+        with mock.patch("subsetzer.engine._http_json", side_effect=fake_http_json):
+            engine_mod._perform_llm_call(
+                server="http://127.0.0.1:8080",
+                provider=PROVIDER_LLAMACPP,
+                mode="generate",
+                body={"model": "test", "messages": [], "stream": False},
+                generate_prompt="hello",
+                stream=False,
+                timeout=30,
+            )
+        self.assertEqual(captured_url, "http://127.0.0.1:8080/v1/completions")
+
+    def test_ollama_chat_endpoint(self):
+        captured_url = None
+
+        def fake_http_json(url, payload, timeout, *, stream, generate_mode=False, raw_handler=None):
+            nonlocal captured_url
+            captured_url = url
+            return "Translated text"
+
+        with mock.patch("subsetzer.engine._http_json", side_effect=fake_http_json):
+            engine_mod._perform_llm_call(
+                server="http://127.0.0.1:11434",
+                provider=PROVIDER_OLLAMA,
+                mode="chat",
+                body={"model": "test", "messages": [], "stream": False},
+                generate_prompt="hello",
+                stream=False,
+                timeout=30,
+            )
+        self.assertEqual(captured_url, "http://127.0.0.1:11434/api/chat")
+
+    def test_extract_message_choices_text(self):
+        payload = {"choices": [{"text": "hello world"}]}
+        result = engine_mod._extract_message(payload, generate_mode=True)
+        self.assertEqual(result, "hello world")
+
+    def test_extract_message_choices_message(self):
+        payload = {"choices": [{"message": {"content": "hello"}}]}
+        result = engine_mod._extract_message(payload, generate_mode=False)
+        self.assertEqual(result, "hello")

@@ -27,13 +27,15 @@ subsetzer --in movie.vtt --out ./results --target "German"
 - Toggle streaming vs buffered responses via `--stream` / `--no-stream`.
 - Use `--no-llm` to dry-run the pipeline and reuse source text.
 - Capture raw responses on disk with `--capture-raw` (implied by `--debug`); otherwise no `llm_raw.txt` is produced.
+- Select your LLM backend with `--provider ollama` (default) or `--provider llamacpp`. This changes the API endpoints used for communication.
 
 ### Environment Variables
 All flags have environment counterparts:
 
 | Variable | Meaning | Flag |
 |----------|---------|------|
-| `SUBSETZER_LLM_SERVER` | Ollama-compatible endpoint | `--server` |
+| `SUBSETZER_LLM_PROVIDER` | `ollama` or `llamacpp` | `--provider` |
+| `SUBSETZER_LLM_SERVER` | LLM server endpoint (overrides provider default) | `--server` |
 | `SUBSETZER_LLM_MODEL` | Model identifier | `--model` |
 | `SUBSETZER_LLM_MODE` | `auto`, `chat`, `generate` | `--llm-mode` |
 | `SUBSETZER_STREAM` | `true` / `false` | `--stream` |
@@ -43,7 +45,7 @@ All flags have environment counterparts:
 Legacy `HOMEDOC_*` names work too. Place the values in `.env` and `source` it before running.
 
 ### Examples
-Translate using a remote host and force SRT output:
+Translate using a remote Ollama host and force SRT output:
 
 ```bash
 subsetzer \
@@ -55,6 +57,19 @@ subsetzer \
   --outfmt srt \
   --cues-per-request 4 \
   --max-chars 6000
+```
+
+Translate using llama.cpp server:
+
+```bash
+subsetzer \
+  --in movie.srt \
+  --out ./translations \
+  --provider llamacpp \
+  --server http://127.0.0.1:8080 \
+  --model my-model \
+  --target "German" \
+  --cues-per-request 4
 ```
 
 Create flat output with a custom template:

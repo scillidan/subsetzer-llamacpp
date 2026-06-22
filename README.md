@@ -4,12 +4,12 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-informational?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-brightgreen?style=flat-square)
 
-Local-first subtitle translation toolkit that talks to an Ollama-compatible LLM.  
+Local-first subtitle translation toolkit that talks to a local LLM via Ollama or llama.cpp server.  
 This repository houses both the CLI package (`subsetzer`) and the Tk-based GUI wrapper (`subsetzer-gui`).  
 Current version: **0.1.4**.
 
 ## Key Features
-- Translate `.srt`, `.vtt`, and `.tsv` subtitle files via models served by Ollama or compatible APIs.
+- Translate `.srt`, `.vtt`, and `.tsv` subtitle files via models served by **Ollama** or **llama.cpp server**.
 - Preserve bracketed/timed markup and keep cue boundaries intact, even when a translation spans multiple lines.
 - Plan work in configurable chunks to control request size and batching.
 - Export to SRT, VTT (with NOTE block describing the run), or TSV with consistent naming templates.
@@ -24,13 +24,22 @@ Current version: **0.1.4**.
 Each package is built and released independently, but they live together so changes to the engine and GUI stay in sync.
 
 ## Installation
-### From PyPI (recommended)
-Install the latest published wheels straight from PyPI:
+
+### From source (with uv)
 
 ```bash
-pipx install subsetzer          # CLI only
-pipx install subsetzer-gui      # GUI (pulls in subsetzer)
+git clone https://github.com/githabideri/subsetzer
+cd subsetzer
+uv venv --python 3.12
+.venv/scripts/activate
+
+# CLI only
+uv pip install -e packages/subsetzer
+
+# CLI + GUI
+uv pip install -e packages/subsetzer -e packages/subsetzer-gui
 ```
+
 Upgrade at any time with `pipx upgrade subsetzer subsetzer-gui`.
 
 ### From a local checkout (development builds)
@@ -50,7 +59,7 @@ pipx install --force packages/subsetzer-gui/dist/subsetzer_gui-0.1.4-py3-none-an
   --pip-args="--no-index --find-links=$(pwd)/packages/subsetzer/dist --find-links=$(pwd)/packages/subsetzer-gui/dist"
 ```
 
-### Editable installs for development
+### From a local checkout (with pip)
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -59,10 +68,14 @@ pip install -e packages/subsetzer-gui
 ```
 
 ## Quickstart
-1. Copy `.env.example` to `.env` and adjust the Ollama server URL/model if needed.
+1. Copy `.env.example` to `.env` and adjust the provider, server URL, and model if needed.
 2. Run a translation from the CLI:
    ```bash
+   # Using Ollama (default)
    subsetzer --in path/to/source.vtt --out ./outputs --target "German"
+
+   # Using llama.cpp server
+   subsetzer --in path/to/source.vtt --out ./outputs --target "German" --provider llamacpp --server http://127.0.0.1:8080
    ```
 3. Or launch the GUI:
    ```bash
@@ -78,6 +91,7 @@ Outputs are written to the chosen directory; VTT exports include a NOTE block ca
 The CLI and GUI honour `SUBSETZER_*` environment variables. Populate `.env` and `source` it before running:
 
 ```
+SUBSETZER_LLM_PROVIDER=ollama
 SUBSETZER_LLM_SERVER=http://127.0.0.1:11434
 SUBSETZER_LLM_MODEL=gemma3:12b
 SUBSETZER_LLM_MODE=auto
@@ -86,7 +100,13 @@ SUBSETZER_HTTP_TIMEOUT=60
 SUBSETZER_CUES_PER_REQUEST=4
 ```
 
+Set `SUBSETZER_LLM_PROVIDER` to `ollama` (default) or `llamacpp`. When using llama.cpp server, the default port is 8080 and the API endpoints follow the OpenAI-compatible format (`/v1/chat/completions`, `/v1/completions`).
+
 Legacy `HOMEDOC_*` names are still accepted for compatibility.
+
+### Provider notes
+- **Ollama** — uses `/api/chat` and `/api/generate` endpoints. Default server: `http://127.0.0.1:11434`.
+- **llama.cpp server** — uses `/v1/chat/completions` and `/v1/completions` (OpenAI-compatible). Default server: `http://127.0.0.1:8080`.
 
 ### Model notes
 - Larger Ollama models (e.g. `gemma3:12b`) handled long-form VTTs reliably in end-to-end tests.
@@ -121,7 +141,7 @@ GitHub Actions publishes tagged releases to PyPI:
 - Tag `subsetzer-vX.Y.Z` to publish the CLI package.
 - Tag `subsetzer-gui-vX.Y.Z` to publish the GUI.
 
-Ensure wheels are built and verified locally (`python -m build …`) before tagging. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Ensure wheels are built and verified locally (`python -m build ...`) before tagging. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Repository Layout
 ```
