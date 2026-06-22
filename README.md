@@ -2,24 +2,12 @@
 
 ![Python](https://img.shields.io/badge/python-3.9%2B-informational?style=flat-square)
 
-Forked and substantially rewritten from the original [subsetzer](https://github.com/githabideri/subsetzer) by Martin Fellner.
-The core translation pipeline (chunking, batch translation, tag protection, cleanup) follows the original design, but:
+Translate subtitle files (SRT/VTT/TSV) using a local llama.cpp server. CLI-first, no external dependencies.
 
-- Stripped to llama.cpp-only, CLI-only, no env vars, no external deps
-- Fixed a critical streaming bug (SSE delta vs message)
-- Added cue-level progress, single-line output collapsing, ISO language mapping
-- Completely reworked CLI interface (--input/--output/--host/--format)
+Forked and substantially rewritten from the original [subsetzer](https://github.com/githabideri/subsetzer) by Martin Fellner.
+The core translation pipeline (chunking, batch translation, tag protection, cleanup) follows the original design.
 
 Authors: GLM-5.1🧙‍♂️, DeepSeek-V4-Pro🧙‍♂️, scillidan🤡
-
-## Key Features
-
-- Translate subtitles via a local llama.cpp server (OpenAI-compatible API)
-- Output flattened to single-line per cue; `- speaker\n- speaker` merged to `- speaker - speaker`
-- Progress bar with percentage during translation
-- Preserve bracketed markup (`[MUSIC]`, stage directions) and cue boundaries
-- Configurable chunk planning and batching for large files
-- Export to SRT, VTT, or TSV
 
 ## Install
 
@@ -31,6 +19,7 @@ uv tool install -U git+https://github.com/scillidan/subsetzer-llamacpp
 
 ```bash
 subsetzer-llamacpp --model gemma-3-12b-it --target "Chinese" --input "Movie.en.srt"
+subsetzer-llamacpp --model gemma-3-12b-it --format srt --no-punc --target "Chinese" --input "Movie.en.srt"
 ```
 
 ## Usage Details
