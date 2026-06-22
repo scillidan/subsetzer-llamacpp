@@ -24,7 +24,7 @@ Authors: GLM-5.1🧙‍♂️, DeepSeek-V4-Pro🧙‍♂️, scillidan🤡
 ## Install
 
 ```bash
-uv tool install git+https://github.com/scillidan/subsetzer-llamacpp
+uv tool install -U git+https://github.com/scillidan/subsetzer-llamacpp
 ```
 
 ## Quickstart
