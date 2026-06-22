@@ -216,8 +216,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif output_path.exists() and args.force:
         print(f"Overwriting {output_path}")
 
-    log_path = output_path.with_suffix(".log")
-    logger = Logger(file_path=log_path, verbose=args.debug)
+    logger = Logger(file_path=None, verbose=args.debug)
     raw_lines: List[str] = []
     collect_raw = bool(args.capture_raw or args.debug)
 
